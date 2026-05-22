@@ -1,108 +1,331 @@
 import math
+import time
 
 import rclpy
 from rclpy.node import Node
 
+from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import TwistStamped
+from std_msgs.msg import Float32
 
-import tf2_ros
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
 
 
-class GlobalFollowerTF(Node):
+class HybridFollower(Node):
 
     def __init__(self):
-        super().__init__('global_follower_tf')
 
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(
-            self.tf_buffer,
-            self
+        super().__init__('hybrid_follower')
+
+        # =====================================================
+        # QoS FOR LIDAR
+        # =====================================================
+
+        qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT
         )
 
-        self.cmd_pub = self.create_publisher(
-            TwistStamped,
-            '/follower1/cmd_vel',
+        # =====================================================
+        # SUBSCRIBERS
+        # =====================================================
+
+        self.create_subscription(
+            Float32,
+            '/leader_direction',
+            self.direction_callback,
             10
         )
 
+        self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.scan_callback,
+            qos
+        )
+
+        # =====================================================
+        # PUBLISHER
+        # =====================================================
+
+        self.cmd_pub = self.create_publisher(
+            TwistStamped,
+            '/cmd_vel',
+            10
+        )
+
+        # =====================================================
+        # STATE
+        # =====================================================
+
+        self.scan = None
+
+        self.leader_visible = False
+
+        self.last_seen_time = time.time()
+
+        self.target_distance = 0.60
+
+        # =====================================================
+        # LOOP
+        # =====================================================
+
         self.timer = self.create_timer(
-            0.1,
+            0.05,
             self.control_loop
         )
 
-        self.follow_distance = 0.5
+        self.get_logger().info(
+            "Hybrid follower started"
+        )
 
-    def normalize_angle(self, angle):
-        while angle > math.pi:
-            angle -= 2.0 * math.pi
-        while angle < -math.pi:
-            angle += 2.0 * math.pi
-        return angle
+    # =========================================================
+    # CALLBACKS
+    # =========================================================
 
-    def get_yaw(self, q):
-        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        return math.atan2(siny_cosp, cosy_cosp)
+    def direction_callback(self, msg):
+
+        if msg.data != 999.0:
+
+            self.leader_visible = True
+            self.last_seen_time = time.time()
+
+        else:
+
+            self.leader_visible = False
+
+    def scan_callback(self, msg):
+
+        self.scan = msg
+
+    # =========================================================
+    # CONTROL LOOP
+    # =========================================================
 
     def control_loop(self):
 
-        try:
-            leader_tf = self.tf_buffer.lookup_transform(
-                'map',
-                'leader/base_link',
-                rclpy.time.Time()
-            )
-
-            follower_tf = self.tf_buffer.lookup_transform(
-                'map',
-                'follower1/base_link',
-                rclpy.time.Time()
-            )
-
-        except Exception as e:
-            self.get_logger().warn(str(e))
+        if self.scan is None:
             return
-
-        lx = leader_tf.transform.translation.x
-        ly = leader_tf.transform.translation.y
-
-        fx = follower_tf.transform.translation.x
-        fy = follower_tf.transform.translation.y
-
-        fq = follower_tf.transform.rotation
-        follower_yaw = self.get_yaw(fq)
-
-        dx = lx - fx
-        dy = ly - fy
-
-        distance = math.sqrt(dx * dx + dy * dy)
-
-        target_angle = math.atan2(dy, dx)
-
-        angle_error = self.normalize_angle(
-            target_angle - follower_yaw
-        )
-
-        distance_error = distance - self.follow_distance
 
         cmd = TwistStamped()
 
-        cmd.twist.angular.z = 2.0 * angle_error
+        cmd.header.stamp = (
+            self.get_clock().now().to_msg()
+        )
 
-        if abs(angle_error) < 0.4:
-            cmd.twist.linear.x = 0.6 * distance_error
+        cmd.twist.linear.x = 0.0
+        cmd.twist.angular.z = 0.0
+
+        current_time = time.time()
+
+        # =====================================================
+        # LEADER VISIBLE
+        # =====================================================
+
+        if self.leader_visible:
+
+            ranges = self.scan.ranges
+
+            valid_ranges = []
+            valid_indices = []
+
+            search_width = 25
+
+            # =================================================
+            # FRONT LEFT SIDE
+            # =================================================
+
+            for i in range(0, search_width):
+
+                r = ranges[i]
+
+                if math.isinf(r):
+                    continue
+
+                if math.isnan(r):
+                    continue
+
+                if r < 0.08:
+                    continue
+
+                if r > 2.5:
+                    continue
+
+                valid_ranges.append(r)
+                valid_indices.append(i)
+
+            # =================================================
+            # FRONT RIGHT SIDE
+            # =================================================
+
+            for i in range(
+                len(ranges) - search_width,
+                len(ranges)
+            ):
+
+                r = ranges[i]
+
+                if math.isinf(r):
+                    continue
+
+                if math.isnan(r):
+                    continue
+
+                if r < 0.08:
+                    continue
+
+                if r > 2.5:
+                    continue
+
+                valid_ranges.append(r)
+                valid_indices.append(i)
+
+            # =================================================
+            # NO FRONT TARGET
+            # =================================================
+
+            if len(valid_ranges) == 0:
+
+                self.get_logger().info(
+                    "NO FRONT TARGET"
+                )
+
+            # =================================================
+            # TARGET FOUND
+            # =================================================
+
+            else:
+
+                best_distance = min(valid_ranges)
+
+                best_index = valid_indices[
+                    valid_ranges.index(best_distance)
+                ]
+
+                # =============================================
+                # CONVERT INDEX TO ANGLE
+                # =============================================
+
+                actual_angle = (
+                    self.scan.angle_min +
+                    best_index *
+                    self.scan.angle_increment
+                )
+
+                # Convert to [-pi, pi]
+                if actual_angle > math.pi:
+
+                    actual_angle -= (
+                        2 * math.pi
+                    )
+
+                angle_error = math.degrees(
+                    actual_angle
+                )
+
+                # =============================================
+                # ANGULAR CONTROL
+                # =============================================
+
+                cmd.twist.angular.z = (
+                    0.012 * angle_error
+                )
+
+                # Deadzone
+                if abs(angle_error) < 5:
+
+                    cmd.twist.angular.z = 0.0
+
+                # Clamp
+                cmd.twist.angular.z = max(
+                    -0.4,
+                    min(
+                        0.4,
+                        cmd.twist.angular.z
+                    )
+                )
+
+                # =============================================
+                # DISTANCE CONTROL
+                # =============================================
+
+                distance_error = (
+                    best_distance -
+                    self.target_distance
+                )
+
+                cmd.twist.linear.x = (
+                    0.55 * distance_error
+                )
+
+                cmd.twist.linear.x = max(
+                    -0.05,
+                    min(
+                        0.20,
+                        cmd.twist.linear.x
+                    )
+                )
+
+                # =============================================
+                # SLOW DOWN WHILE TURNING
+                # =============================================
+
+                turn_strength = abs(
+                    cmd.twist.angular.z
+                )
+
+                cmd.twist.linear.x *= (
+                    max(
+                        0.3,
+                        1.0 - 1.5 * turn_strength
+                    )
+                )
+
+                # =============================================
+                # DEBUG
+                # =============================================
+
+                self.get_logger().info(
+                    f"TRACKING | "
+                    f"dist={best_distance:.2f} "
+                    f"angle={angle_error:.1f}"
+                )
+
+        # =====================================================
+        # CAMERA LOST
+        # =====================================================
+
         else:
-            cmd.twist.linear.x = 0.0
 
-        cmd.twist.linear.x = max(
-            min(cmd.twist.linear.x, 0.15),
-            -0.15
-        )
+            lost_duration = (
+                current_time -
+                self.last_seen_time
+            )
 
-        cmd.twist.angular.z = max(
-            min(cmd.twist.angular.z, 1.5),
-            -1.5
-        )
+            # =================================================
+            # SHORT MEMORY
+            # =================================================
+
+            if lost_duration < 1.0:
+
+                cmd.twist.linear.x = 0.03
+
+                self.get_logger().info(
+                    "MEMORY TRACK"
+                )
+
+            # =================================================
+            # SEARCH
+            # =================================================
+
+            else:
+
+                cmd.twist.angular.z = 0.16
+
+                self.get_logger().info(
+                    "SEARCHING"
+                )
 
         self.cmd_pub.publish(cmd)
 
@@ -111,11 +334,12 @@ def main(args=None):
 
     rclpy.init(args=args)
 
-    node = GlobalFollowerTF()
+    node = HybridFollower()
 
     rclpy.spin(node)
 
     node.destroy_node()
+
     rclpy.shutdown()
 
 
