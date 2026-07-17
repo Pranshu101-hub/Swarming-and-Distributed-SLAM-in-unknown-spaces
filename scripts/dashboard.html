@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Explorer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0e14;
+  color: #c8d0db;
+  font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  grid-template-columns: 1fr 270px;
+  overflow: hidden;
+}
+
+header {
+  grid-column: 1 / -1;
+  background: #0f1520;
+  border-bottom: 1px solid #1e2a3a;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 14px;
+}
+
+.logo {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #4fc3f7;
+  text-transform: uppercase;
+}
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ef5350;
+  transition: background 0.3s;
+}
+.status-dot.on { background: #66bb6a; }
+
+.status-text { font-size: 11px; color: #37474f; }
+
+.mode-badge {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  background: #0d2a1a;
+  border: 1px solid #1b4a2a;
+  color: #66bb6a;
+  letter-spacing: 0.1em;
+}
+.mode-badge.manual {
+  background: #2a1a0d;
+  border-color: #4a2a0d;
+  color: #ffa726;
+}
+
+#map-wrap {
+  position: relative;
+  background: #060a0f;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+canvas { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+
+.hint {
+  position: absolute;
+  bottom: 12px; left: 12px;
+  font-size: 10px;
+  color: #1e2a3a;
+  pointer-events: none;
+  letter-spacing: 0.06em;
+}
+
+/* confirmation dialog */
+#confirm-box {
+  display: none;
+  position: absolute;
+  background: #0f1520;
+  border: 1px solid #ffa726;
+  border-radius: 6px;
+  padding: 14px 16px;
+  width: 220px;
+  z-index: 10;
+  box-shadow: 0 8px 32px #000a;
+}
+
+#confirm-box .cb-title {
+  font-size: 11px;
+  color: #ffa726;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+#confirm-box .cb-coords {
+  font-size: 12px;
+  color: #c8d0db;
+  margin-bottom: 12px;
+}
+
+#confirm-box .cb-note {
+  font-size: 10px;
+  color: #546e7a;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.cb-buttons { display: flex; gap: 8px; }
+
+.cb-btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid;
+  transition: all 0.15s;
+}
+
+.cb-confirm {
+  background: #1a2a10;
+  border-color: #2a4a18;
+  color: #66bb6a;
+}
+.cb-confirm:hover { background: #223514; border-color: #66bb6a; }
+
+.cb-cancel {
+  background: #1a1010;
+  border-color: #3a1a1a;
+  color: #ef5350;
+}
+.cb-cancel:hover { background: #261414; border-color: #ef5350; }
+
+/* panel */
+.panel {
+  background: #0f1520;
+  border-left: 1px solid #1e2a3a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.psec {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1e2a3a;
+}
+
+.plabel {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #37474f;
+  margin-bottom: 10px;
+}
+
+.ip-row { display: flex; gap: 8px; align-items: center; }
+
+input[type="text"] {
+  flex: 1;
+  background: #060a0f;
+  border: 1px solid #1e2a3a;
+  color: #c8d0db;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  outline: none;
+}
+input[type="text"]:focus { border-color: #4fc3f7; }
+
+button {
+  background: #1a2332;
+  border: 1px solid #2a3a4a;
+  color: #c8d0db;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+button:hover { background: #243040; border-color: #4fc3f7; color: #4fc3f7; }
+
+.btn-stop {
+  width: 100%;
+  background: #1a0f0f;
+  border-color: #3a1a1a;
+  color: #ef5350;
+  margin-top: 8px;
+  padding: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.btn-stop:hover { background: #2a1010; border-color: #ef5350; }
+
+.btn-resume {
+  width: 100%;
+  background: #0d2a1a;
+  border-color: #1b4a2a;
+  color: #66bb6a;
+  margin-top: 6px;
+  padding: 6px;
+  font-size: 10px;
+  display: none;
+}
+.btn-resume:hover { background: #122010; border-color: #66bb6a; }
+
+.robot-card {
+  background: #060a0f;
+  border: 1px solid #1e2a3a;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.rname {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.rdot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #37474f;
+  transition: background 0.3s;
+}
+.rdot.on { background: #66bb6a; }
+.rdot.r2 { }
+.rdot.r2.on { background: #aed581; }
+
+.rstat {
+  font-size: 10px;
+  color: #546e7a;
+  line-height: 1.9;
+}
+.rstat span { color: #90a4ae; }
+
+.log-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+}
+
+.log-entry {
+  font-size: 10px;
+  line-height: 1.6;
+  color: #37474f;
+  border-left: 2px solid #1e2a3a;
+  padding-left: 8px;
+  margin-bottom: 3px;
+}
+.log-entry.info  { border-color: #4fc3f7; color: #78909c; }
+.log-entry.warn  { border-color: #ffa726; color: #ffa726; }
+.log-entry.goal  { border-color: #66bb6a; color: #66bb6a; }
+.log-entry.error { border-color: #ef5350; color: #ef5350; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Swarm Explorer</div>
+  <div class="status-dot" id="dot"></div>
+  <div class="status-text" id="stext">disconnected</div>
+  <div class="mode-badge" id="mode-badge">AUTONOMOUS</div>
+</header>
+
+<div id="map-wrap">
+  <canvas id="mc"></canvas>
+
+  <!-- confirmation box shown when user clicks map -->
+  <div id="confirm-box">
+    <div class="cb-title">SEND MANUAL GOAL?</div>
+    <div class="cb-coords" id="cb-coords"></div>
+    <div class="cb-note">This will pause autonomous frontier exploration for robot1 until it reaches this point.</div>
+    <div class="cb-buttons">
+      <button class="cb-btn cb-confirm" onclick="confirmGoal()">Send Goal</button>
+      <button class="cb-btn cb-cancel" onclick="cancelGoal()">Cancel</button>
+    </div>
+  </div>
+
+  <div class="hint">click map to set manual goal for robot1</div>
+</div>
+
+<div class="panel">
+  <div class="psec">
+    <div class="plabel">Connection</div>
+    <div class="ip-row">
+      <input type="text" id="ip" value="192.168.0.63" placeholder="Pi IP">
+      <button id="cbtn" onclick="toggleConnect()">Connect</button>
+    </div>
+  </div>
+
+  <div class="psec">
+    <div class="plabel">Robots</div>
+
+    <div class="robot-card">
+      <div class="rname">
+        <div class="rdot" id="d1"></div>
+        <span style="color:#4fc3f7">robot1</span>
+      </div>
+      <div class="rstat">
+        x: <span id="r1x">–</span> &nbsp; y: <span id="r1y">–</span><br>
+        yaw: <span id="r1yaw">–</span>°<br>
+        goal: <span id="r1goal">none</span>
+      </div>
+    </div>
+
+    <div class="robot-card">
+      <div class="rname">
+        <div class="rdot r2" id="d2"></div>
+        <span style="color:#aed581">robot2</span>
+      </div>
+      <div class="rstat">
+        x: <span id="r2x">–</span> &nbsp; y: <span id="r2y">–</span><br>
+        yaw: <span id="r2yaw">–</span>°<br>
+        goal: <span id="r2goal">none</span>
+      </div>
+    </div>
+
+    <button class="btn-stop" onclick="stopAll()">STOP ALL ROBOTS</button>
+    <button class="btn-resume" id="resume-btn" onclick="resumeAuto()">RESUME AUTONOMOUS</button>
+  </div>
+
+  <div class="plabel" style="padding: 12px 16px 0">Log</div>
+  <div class="log-wrap" id="log"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/roslibjs/1.1.0/roslib.min.js"></script>
+<script>
+let ros = null;
+let mapInfo = null;
+let mapImageData = null;
+let pendingGoal = null;
+let manualMode = false;
+
+let robots = {
+  robot1: { x: null, y: null, yaw: null, goal: null },
+  robot2: { x: null, y: null, yaw: null, goal: null },
+};
+
+let canvas = document.getElementById('mc');
+let ctx = canvas.getContext('2d');
+let wrap = document.getElementById('map-wrap');
+let confirmBox = document.getElementById('confirm-box');
+
+function log(msg, type='') {
+  let area = document.getElementById('log');
+  let d = document.createElement('div');
+  d.className = 'log-entry ' + type;
+  let t = new Date().toLocaleTimeString('en', { hour12:false });
+  d.textContent = t + ' ' + msg;
+  area.appendChild(d);
+  area.scrollTop = area.scrollHeight;
+  if (area.children.length > 150) area.removeChild(area.children[0]);
+}
+
+function toggleConnect() {
+  if (ros && ros.isConnected) { ros.close(); return; }
+  let ip = document.getElementById('ip').value.trim();
+  ros = new ROSLIB.Ros({ url: `ws://${ip}:9090` });
+  log(`connecting to ${ip}:9090...`);
+
+  ros.on('connection', () => {
+    document.getElementById('dot').classList.add('on');
+    document.getElementById('stext').textContent = 'connected';
+    document.getElementById('cbtn').textContent = 'Disconnect';
+    log('connected', 'info');
+    subscribeAll();
+  });
+  ros.on('error', e => log('error: ' + e, 'error'));
+  ros.on('close', () => {
+    document.getElementById('dot').classList.remove('on');
+    document.getElementById('stext').textContent = 'disconnected';
+    document.getElementById('cbtn').textContent = 'Connect';
+    log('disconnected');
+  });
+}
+
+function subscribeAll() {
+  // map
+  new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:500 })
+    .subscribe(drawMap);
+  log('subscribed to /map', 'info');
+
+  // TF
+  new ROSLIB.Topic({ ros, name:'/tf', messageType:'tf2_msgs/TFMessage', throttle_rate:100 })
+    .subscribe(msg => {
+      for (let t of msg.transforms) {
+        let cf = t.child_frame_id;
+        let name = null;
+        if (cf === 'robot1/base_link' || cf === 'robot1/base_footprint') name = 'robot1';
+        if (cf === 'robot2/base_link' || cf === 'robot2/base_footprint') name = 'robot2';
+        if (!name) continue;
+        let tr = t.transform.translation;
+        let ro = t.transform.rotation;
+        robots[name].x = tr.x;
+        robots[name].y = tr.y;
+        robots[name].yaw = Math.atan2(
+          2*(ro.w*ro.z + ro.x*ro.y),
+          1 - 2*(ro.y*ro.y + ro.z*ro.z)
+        ) * 180 / Math.PI;
+        updateCard(name);
+        if (mapInfo) redraw();
+      }
+    });
+}
+
+function updateCard(name) {
+  let r = robots[name];
+  let n = name === 'robot1' ? '1' : '2';
+  if (r.x !== null) {
+    document.getElementById('r'+n+'x').textContent = r.x.toFixed(2);
+    document.getElementById('r'+n+'y').textContent = r.y.toFixed(2);
+    document.getElementById('r'+n+'yaw').textContent = r.yaw.toFixed(1);
+    document.getElementById('d'+n).classList.add('on');
+  }
+  if (r.goal) {
+    document.getElementById('r'+n+'goal').textContent =
+      `(${r.goal.x.toFixed(1)}, ${r.goal.y.toFixed(1)})`;
+  } else {
+    document.getElementById('r'+n+'goal').textContent = 'none';
+  }
+}
+
+function drawMap(msg) {
+  mapInfo = msg.info;
+  let w = msg.info.width;
+  let h = msg.info.height;
+  let ww = wrap.clientWidth;
+  let wh = wrap.clientHeight;
+  let scale = Math.min(ww/w, wh/h);
+
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.width  = (w*scale)+'px';
+  canvas.style.height = (h*scale)+'px';
+  canvas.style.left   = ((ww - w*scale)/2)+'px';
+  canvas.style.top    = ((wh - h*scale)/2)+'px';
+
+  mapImageData = ctx.createImageData(w, h);
+  let data = msg.data;
+  for (let i = 0; i < data.length; i++) {
+    let v = data[i];
+    let r, g, b;
+    if      (v === -1) { r=20;  g=25;  b=32;  }  // unknown — very dark
+    else if (v === 0)  { r=44;  g=54;  b=68;  }  // free — mid grey-blue
+    else               { r=185; g=205; b=225; }   // occupied — bright
+    // flip Y: ROS origin is bottom-left, canvas is top-left
+    let row = h - 1 - Math.floor(i/w);
+    let col = i % w;
+    let px = (row*w + col)*4;
+    mapImageData.data[px]   = r;
+    mapImageData.data[px+1] = g;
+    mapImageData.data[px+2] = b;
+    mapImageData.data[px+3] = 255;
+  }
+  redraw();
+}
+
+function redraw() {
+  if (!mapImageData || !mapInfo) return;
+  ctx.putImageData(mapImageData, 0, 0);
+
+  let w = mapInfo.width;
+  let h = mapInfo.height;
+  let ww = wrap.clientWidth;
+  let wh = wrap.clientHeight;
+  let scale = Math.min(ww/w, wh/h);
+  let offX = (ww - w*scale)/2;
+  let offY = (wh - h*scale)/2;
+
+  function toCanvas(wx, wy) {
+    let col = (wx - mapInfo.origin.position.x) / mapInfo.resolution;
+    let row = h - (wy - mapInfo.origin.position.y) / mapInfo.resolution;
+    return { x: col*scale, y: row*scale };
+  }
+
+  let colors = { robot1:'#4fc3f7', robot2:'#aed581' };
+
+  for (let name of ['robot1','robot2']) {
+    let r = robots[name];
+    if (r.x === null) continue;
+    let p = toCanvas(r.x, r.y);
+
+    // goal dashed line
+    if (r.goal) {
+      let gp = toCanvas(r.goal.x, r.goal.y);
+      ctx.beginPath();
+      ctx.setLineDash([3,4]);
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(gp.x, gp.y);
+      ctx.strokeStyle = colors[name]+'55';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // goal circle
+      ctx.beginPath();
+      ctx.arc(gp.x, gp.y, 5, 0, Math.PI*2);
+      ctx.strokeStyle = colors[name];
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // robot circle
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI*2);
+    ctx.fillStyle = colors[name];
+    ctx.fill();
+
+    // heading
+    if (r.yaw !== null) {
+      let rad = r.yaw * Math.PI / 180;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.cos(rad)*12, p.y - Math.sin(rad)*12);
+      ctx.strokeStyle = '#0a0e14';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+  }
+
+  // pending goal marker
+  if (pendingGoal) {
+    let pp = toCanvas(pendingGoal.wx, pendingGoal.wy);
+    ctx.beginPath();
+    ctx.arc(pp.x, pp.y, 8, 0, Math.PI*2);
+    ctx.strokeStyle = '#ffa726';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pp.x, pp.y, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#ffa726';
+    ctx.fill();
+  }
+}
+
+// click on map
+wrap.addEventListener('click', e => {
+  if (!ros || !mapInfo) return;
+  // if confirm box is open, ignore clicks on the wrap itself
+  if (confirmBox.style.display === 'block') return;
+
+  let rect = wrap.getBoundingClientRect();
+  let cx = e.clientX - rect.left;
+  let cy = e.clientY - rect.top;
+
+  let w = mapInfo.width;
+  let h = mapInfo.height;
+  let ww = wrap.clientWidth;
+  let wh = wrap.clientHeight;
+  let scale = Math.min(ww/w, wh/h);
+  let offX = (ww - w*scale)/2;
+  let offY = (wh - h*scale)/2;
+
+  // canvas coords relative to map canvas
+  let mcx = cx - offX;
+  let mcy = cy - offY;
+
+  let col = mcx / scale;
+  let row = mcy / scale;
+  let wx = mapInfo.origin.position.x + col * mapInfo.resolution;
+  let wy = mapInfo.origin.position.y + (h - row) * mapInfo.resolution;
+
+  pendingGoal = { wx, wy, cx, cy };
+  redraw();
+
+  // show confirm box near click but keep it on screen
+  let bw = 220, bh = 160;
+  let bx = Math.min(cx + 12, wrap.clientWidth  - bw - 8);
+  let by = Math.min(cy + 12, wrap.clientHeight - bh - 8);
+  confirmBox.style.left = bx + 'px';
+  confirmBox.style.top  = by + 'px';
+  confirmBox.style.display = 'block';
+  document.getElementById('cb-coords').textContent =
+    `x: ${wx.toFixed(2)} m    y: ${wy.toFixed(2)} m`;
+});
+
+function confirmGoal() {
+  if (!pendingGoal) return;
+  confirmBox.style.display = 'none';
+
+  let goalTopic = new ROSLIB.Topic({
+    ros,
+    name: '/manual_goal',
+    messageType: 'geometry_msgs/Point',
+  });
+  goalTopic.publish(new ROSLIB.Message({ x: pendingGoal.wx, y: pendingGoal.wy, z: 0.0 }));
+
+  robots.robot1.goal = { x: pendingGoal.wx, y: pendingGoal.wy };
+  updateCard('robot1');
+  setManualMode(true);
+  log(`manual goal sent: (${pendingGoal.wx.toFixed(2)}, ${pendingGoal.wy.toFixed(2)})`, 'goal');
+  pendingGoal = null;
+  redraw();
+}
+
+function cancelGoal() {
+  confirmBox.style.display = 'none';
+  pendingGoal = null;
+  redraw();
+  log('goal cancelled');
+}
+
+function setManualMode(on) {
+  manualMode = on;
+  let badge = document.getElementById('mode-badge');
+  let resumeBtn = document.getElementById('resume-btn');
+  if (on) {
+    badge.textContent = 'MANUAL OVERRIDE';
+    badge.classList.add('manual');
+    resumeBtn.style.display = 'block';
+  } else {
+    badge.textContent = 'AUTONOMOUS';
+    badge.classList.remove('manual');
+    resumeBtn.style.display = 'none';
+  }
+}
+
+function resumeAuto() {
+  // publish empty point to clear manual goal on coordinator
+  let goalTopic = new ROSLIB.Topic({
+    ros,
+    name: '/manual_goal',
+    messageType: 'geometry_msgs/Point',
+  });
+  // z=999 is a sentinel value the coordinator ignores and treats as "resume"
+  goalTopic.publish(new ROSLIB.Message({ x: 0.0, y: 0.0, z: 999.0 }));
+  setManualMode(false);
+  robots.robot1.goal = null;
+  updateCard('robot1');
+  log('autonomous exploration resumed', 'info');
+  redraw();
+}
+
+function stopAll() {
+  for (let name of ['robot1','robot2']) {
+    new ROSLIB.Topic({ ros, name:'/'+name+'/cmd_vel', messageType:'geometry_msgs/TwistStamped' })
+      .publish(new ROSLIB.Message({
+        header: { stamp:{ sec:0, nanosec:0 }, frame_id:'' },
+        twist: { linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} }
+      }));
+  }
+  log('STOP sent to all robots', 'warn');
+}
+
+// close confirm box on escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') cancelGoal();
+});
+</script>
+</body>
+</html>
